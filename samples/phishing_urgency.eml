@@ -1,0 +1,18 @@
+From: security@paypa1-shop.com
+To: admin@shop-example.com
+Subject: URGENT: Your account will be suspended
+Date: Mon, 19 May 2026 11:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Authentication-Results: mx.google.com;
+ dkim=fail;
+ spf=fail;
+ dmarc=fail
+Return-Path: <bouncer@evil-host.net>
+Reply-To: attacker@evil-host.net
+
+<html><body>
+<p>verify your account immediately or it will be closed.</p>
+<p><a href="http://192.168.0.1/login?steal=creds">Click here to verify</a></p>
+<p style="display:none">http://hidden-phish.evil/steal</p>
+</body></html>

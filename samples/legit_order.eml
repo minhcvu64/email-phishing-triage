@@ -1,0 +1,13 @@
+From: orders@shop-example.com
+To: admin@shop-example.com
+Subject: Order #12345 confirmed
+Date: Mon, 19 May 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Authentication-Results: mx.google.com;
+ dkim=pass header.d=shop-example.com;
+ spf=pass smtp.mailfrom=shop-example.com;
+ dmarc=pass action=none header.from=shop-example.com
+Return-Path: <orders@shop-example.com>
+
+Thank you for your purchase. Track your order at https://shop-example.com/orders/12345

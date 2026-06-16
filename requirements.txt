@@ -1,0 +1,20 @@
+# DNS (DMARC policy lookup)
+dnspython>=2.6.0
+
+# URL / HTML analysis
+beautifulsoup4>=4.12.0
+tldextract>=5.1.0
+
+# Attachments & images
+Pillow>=10.0.0
+pyzbar>=0.1.9
+
+# VirusTotal (optional — needs API key)
+vt-py>=0.18.0
+
+# CLI & config
+python-dotenv>=1.0.0
+rich>=13.7.0
+
+# Tests
+pytest>=8.0.0
