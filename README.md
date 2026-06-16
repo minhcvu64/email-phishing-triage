@@ -1,155 +1,179 @@
 # Email Phishing Triage
 
-Công cụ phân tích email (`.eml`) giúp **triage** — phân loại email **legit** vs **phishing** — cho kịch bản bạn quản lý inbox của một trang web bán hàng.
+A Python security tool that analyzes exported email files (`.eml`) to help distinguish **legitimate messages** from **phishing attempts**. Built as a portfolio project for cybersecurity and SOC analyst roles.
 
-> Dự án portfolio Cyber Security — viết bằng Python, phù hợp người mới nhập môn.
+**Use case:** You manage the inbox for an e-commerce support address (e.g. `support@yourshop.com`) and need a repeatable way to triage suspicious messages before clicking links or opening attachments.
 
-## Sơ đồ tổng quan
+## Features
+
+- **Email parsing** — headers, plain/HTML body, attachments, inline images
+- **Authentication checks** — SPF, DKIM, DMARC from `Authentication-Results` headers
+- **DMARC DNS lookup** — inspect sender domain policy (`p=none`, `quarantine`, `reject`)
+- **URL analysis** — raw IP links, HTTP (non-TLS), typosquatting vs trusted domains
+- **Content heuristics** — urgency/credential lure phrases, image-only emails
+- **Attachment analysis** — dangerous file types, SHA-256 hashing
+- **VirusTotal integration** — optional hash lookup (no file upload if hash is known)
+- **QR code scanning** — decode QR payloads hidden in image-only phishing emails
+- **Encrypted email handling** — flags S/MIME and PGP for manual review
+- **Risk scoring** — 0–100 score with verdict: `legit`, `suspicious`, `phishing`, or `manual_review`
+
+## Architecture
 
 ```mermaid
 flowchart TB
     subgraph Input
-        EML[File .eml hoặc export từ Gmail/Outlook]
+        EML[.eml file exported from Gmail / Outlook]
     end
 
     subgraph Parse
-        P[parser.py — đọc header + body + attachments]
+        P[parser.py — headers, body, attachments]
     end
 
     subgraph Checks
-        A[auth_check.py — SPF/DKIM/DMARC từ header + DNS DMARC]
-        U[indicators.py — URL, urgency, typosquat]
-        AT[attachments.py — hash SHA256 + VirusTotal]
-        QR[image_qr.py — quét QR trong ảnh inline]
-        ENC[encrypted.py — S/MIME, PGP]
+        A[auth_check.py — SPF / DKIM / DMARC + DNS]
+        U[indicators.py — URLs, urgency, typosquat]
+        AT[attachments.py — SHA-256 + VirusTotal]
+        QR[image_qr.py — QR decode in inline images]
+        ENC[encrypted.py — S/MIME, PGP detection]
     end
 
     subgraph Output
-        S[scorer.py — risk 0-100 + verdict]
-        R[Báo cáo CLI / JSON]
+        S[scorer.py — risk score + verdict]
+        R[CLI report or JSON]
     end
 
     EML --> P
-    P --> A
-    P --> U
-    P --> AT
-    P --> QR
-    P --> ENC
-    A --> S
-    U --> S
-    AT --> S
-    QR --> S
-    ENC --> S
-    S --> R
+    P --> A & U & AT & QR & ENC
+    A & U & AT & QR & ENC --> S --> R
 ```
 
-## Luồng quyết định (verdict)
+## Verdict flow
 
 ```mermaid
 flowchart LR
-    Start([Email vào]) --> Enc{Encrypted?}
-    Enc -->|Có| MR[MANUAL_REVIEW]
-    Enc -->|Không| Score{Risk score}
-    Score -->|≥ 70 hoặc critical| Phish[PHISHING]
-    Score -->|40-69 hoặc high| Sus[SUSPICIOUS]
-    Score -->|≤ 15, không có signal xấu| Legit[LEGIT]
-    Score -->|Khác| Sus
+    Start([Incoming email]) --> Enc{Encrypted?}
+    Enc -->|Yes| MR[MANUAL_REVIEW]
+    Enc -->|No| Score{Risk score}
+    Score -->|≥ 70 or critical finding| Phish[PHISHING]
+    Score -->|40–69 or high finding| Sus[SUSPICIOUS]
+    Score -->|≤ 15, no bad signals| Legit[LEGIT]
+    Score -->|Otherwise| Sus
 ```
 
-## Các lớp kiểm tra
+## Detection layers
 
-| Lớp | Tool / thư viện | Ý nghĩa |
-|-----|-----------------|--------|
-| Parse email | Python `email` (stdlib) | Đọc header, text/html, file đính kèm |
-| SPF / DKIM / DMARC | Header `Authentication-Results` | Mail server đã xác thực chữ ký & policy chưa |
-| DMARC DNS | `dnspython` | Domain gửi có publish policy `p=reject` không |
-| URL & nội dung | `beautifulsoup4`, regex | Link lừa đảo, IP thay domain, câu urgency |
-| Attachment | SHA-256 + `vt-py` | Hash gửi VirusTotal (không upload file thật nếu đã có hash) |
-| QR trong ảnh | `Pillow` + `pyzbar` | Phishing chỉ có ảnh + QR |
-| Mã hóa | Heuristic S/MIME / PGP | Không đọc được body → review tay |
+| Layer | Library / tool | What it checks |
+|-------|----------------|----------------|
+| Email parsing | Python `email` (stdlib) | Headers, text/HTML, attachments |
+| SPF / DKIM / DMARC | `Authentication-Results` header | Did the receiving server validate the sender? |
+| DMARC DNS | `dnspython` | Does the sender domain publish a strict policy? |
+| URLs & content | `beautifulsoup4`, regex | Phishing links, hidden URLs, lure language |
+| Attachments | SHA-256 + `vt-py` | Known-malware hash lookup via VirusTotal |
+| QR in images | `Pillow` + `pyzbar` | Image-only emails with QR-encoded URLs |
+| Encryption | S/MIME / PGP heuristics | Body unreadable → manual review |
 
-## Edge cases
-
-### 1. Email encrypted (S/MIME / PGP)
-
-- **Vấn đề:** Body và URL bên trong không đọc được.
-- **Cách xử lý trong project:** Gán verdict `MANUAL_REVIEW`, vẫn phân tích **header ngoài** (From, Authentication-Results, Reply-To).
-- **Thực tế:** Cần key giải mã trong môi trường sandbox, hoặc chính sách "không cho phép encrypted mail từ vendor lạ".
-
-### 2. Email chỉ có ảnh + QR code
-
-- **Vấn đề:** Không có link text; nạn nhân quét QR bằng điện thoại.
-- **Cách xử lý:** `image_qr.py` decode QR → lấy URL → chạy lại bộ lọc URL (typosquat, shortener).
-- **Lưu ý:** Cần cài `zbar` trên macOS: `brew install zbar`
-
-## Cài đặt
+## Quick start
 
 ```bash
+git clone https://github.com/minhcvu64/email-phishing-triage.git
 cd email-phishing-triage
+
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# macOS — cho quét QR
+# macOS — required for QR scanning
 brew install zbar
 
 cp .env.example .env
-# Thêm VIRUSTOTAL_API_KEY (tùy chọn) và TRUSTED_DOMAINS=yourshop.com
+# Optional: set VIRUSTOTAL_API_KEY and TRUSTED_DOMAINS=yourshop.com
 ```
 
-## Chạy thử
+## Usage
 
 ```bash
-# Email mẫu legit
+# Analyze a sample legitimate order email
 python -m src.triage samples/legit_order.eml
 
-# Email mẫu phishing
+# Analyze a sample phishing email
 python -m src.triage samples/phishing_urgency.eml
 
-# JSON (tích hợp pipeline sau này)
+# JSON output (for automation / SIEM integration)
 python -m src.triage samples/phishing_urgency.eml --json
 
-# Tests
+# Run tests
 pytest -q
 ```
 
-## Export email thật thành .eml
+### Example output (phishing sample)
 
-- **Gmail:** Mở email → ⋮ → "Download message"
-- **Outlook:** Kéo email ra Desktop hoặc Save As `.eml`
+```
+Verdict: PHISHING
+Risk score: 100/100
 
-Không commit file email thật có dữ liệu khách hàng lên GitHub.
+Findings:
+  critical  auth     SPF failed — strong phishing indicator
+  critical  auth     DKIM failed — strong phishing indicator
+  critical  auth     DMARC failed — strong phishing indicator
+  high      url      URL uses raw IP address
+  medium    content  Urgency / credential lure phrase detected
+```
 
-## Mở rộng cho resume (roadmap)
+## Export real emails as `.eml`
 
-1. **IMAP listener** — tự lấy mail từ `support@yourshop.com`
-2. **Dashboard** — Streamlit hiển thị hàng đợi triage
-3. **Threat intel** — URLhaus / PhishTank API
-4. **Sandbox** — gửi attachment vào Cuckoo / ANY.RUN (lab)
-5. **ML** — phân loại nội dung (sau khi đã hiểu rule-based)
+- **Gmail:** Open message → ⋮ → **Download message**
+- **Outlook:** Drag message to Desktop, or **Save As** → `.eml`
 
-## Cấu trúc thư mục
+> **Do not commit real customer emails to GitHub.** Use the included fictional samples for demos.
+
+## Edge cases
+
+### Encrypted email (S/MIME / PGP)
+
+The body and embedded URLs cannot be analyzed automatically. The tool assigns `manual_review` but still inspects outer headers (`From`, `Authentication-Results`, `Reply-To`, `Return-Path`).
+
+### Image-only email with QR code
+
+Attackers hide malicious URLs inside QR codes so there are no clickable links in the HTML. The tool decodes QR payloads from inline/attached images and runs URL checks on the result.
+
+## Project structure
 
 ```
 email-phishing-triage/
 ├── src/
-│   ├── parser.py
-│   ├── auth_check.py
-│   ├── indicators.py
-│   ├── attachments.py
-│   ├── image_qr.py
-│   ├── encrypted.py
-│   ├── scorer.py
-│   └── triage.py
-├── samples/          # .eml demo (fictional)
+│   ├── triage.py        # CLI entry point & pipeline orchestration
+│   ├── parser.py        # .eml parsing
+│   ├── auth_check.py    # SPF / DKIM / DMARC
+│   ├── indicators.py    # URL & content heuristics
+│   ├── attachments.py   # file hashing & VirusTotal
+│   ├── image_qr.py      # QR code extraction
+│   ├── encrypted.py     # encryption detection
+│   ├── scorer.py        # risk score & verdict
+│   └── models.py        # data structures
+├── samples/             # fictional demo .eml files
 ├── tests/
 ├── requirements.txt
 └── README.md
 ```
 
+## Roadmap
+
+- [ ] IMAP listener — auto-fetch from `support@yourshop.com`
+- [ ] Streamlit dashboard — triage queue UI
+- [ ] Threat intel feeds — URLhaus / PhishTank
+- [ ] Attachment sandbox — Cuckoo / ANY.RUN (lab environment)
+- [ ] ML classifier — content-based scoring after rule-based baseline
+
+## Interview talking points
+
+1. **Defense in depth** — no single signal is trusted; auth, content, attachments, and QR checks are combined into a weighted score.
+2. **Limits of automation** — encrypted mail and BEC (business email compromise) still require human review.
+3. **Safe analysis workflow** — analyze `.eml` exports offline; never open suspicious attachments on a production machine.
+4. **Real-world stack** — this tool complements (not replaces) SEG products (Proofpoint, Mimecast) and provider-level spam filters.
+
 ## Disclaimer
 
-Tool này **hỗ trợ** phân tích, không thay thế quy trình bảo mật chính thức (SEG, MFA, đào tạo nhân viên). Luôn xử lý email nghi ngờ trong VM / sandbox.
+This tool **assists** with triage. It does not replace enterprise email security gateways, MFA, or security awareness training. Always handle suspicious email in an isolated VM or sandbox.
 
 ## License
 
